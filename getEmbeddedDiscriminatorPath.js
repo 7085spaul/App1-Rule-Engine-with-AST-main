@@ -1,94 +1,53 @@
 'use strict';
 
-const cleanPositionalOperators = require('../schema/cleanPositionalOperators');
 const get = require('../get');
-const getDiscriminatorByValue = require('../discriminator/getDiscriminatorByValue');
-const updatedPathsByArrayFilter = require('../update/updatedPathsByArrayFilter');
+const getSchemaDiscriminatorByValue = require('../discriminator/getSchemaDiscriminatorByValue');
 
 /**
  * Like `schema.path()`, except with a document, because impossible to
  * determine path type without knowing the embedded discriminator key.
- * @param {Schema} schema
- * @param {Object} [update]
- * @param {Object} [filter]
- * @param {String} path
+ *
+ * @param {Document} doc
+ * @param {String|String[]} path
  * @param {Object} [options]
  * @api private
  */
 
-module.exports = function getEmbeddedDiscriminatorPath(schema, update, filter, path, options) {
-  const parts = path.split('.');
-  let schematype = null;
+module.exports = function getEmbeddedDiscriminatorPath(doc, path, options) {
+  options = options || {};
+  const typeOnly = options.typeOnly;
+  const parts = Array.isArray(path) ?
+    path :
+    (path.indexOf('.') === -1 ? [path] : path.split('.'));
+  let schemaType = null;
   let type = 'adhocOrUndefined';
 
-  filter = filter || {};
-  update = update || {};
-  const arrayFilters = options != null && Array.isArray(options.arrayFilters) ?
-    options.arrayFilters : [];
-  const updatedPathsByFilter = updatedPathsByArrayFilter(update);
+  const schema = getSchemaDiscriminatorByValue(doc.schema, doc.get(doc.schema.options.discriminatorKey)) || doc.schema;
 
   for (let i = 0; i < parts.length; ++i) {
-    const subpath = cleanPositionalOperators(parts.slice(0, i + 1).join('.'));
-    schematype = schema.path(subpath);
-    if (schematype == null) {
+    const subpath = parts.slice(0, i + 1).join('.');
+    schemaType = schema.path(subpath);
+    if (schemaType == null) {
+      type = 'adhocOrUndefined';
       continue;
     }
-
+    if (schemaType.instance === 'Mixed') {
+      return typeOnly ? 'real' : schemaType;
+    }
     type = schema.pathType(subpath);
-    if ((schematype.$isSingleNested || schematype.$isMongooseDocumentArrayElement) &&
-        schematype.schema.discriminators != null) {
-      const key = get(schematype, 'schema.options.discriminatorKey');
-      const discriminatorValuePath = subpath + '.' + key;
-      const discriminatorFilterPath =
-        discriminatorValuePath.replace(/\.\d+\./, '.');
-      let discriminatorKey = null;
-
-      if (discriminatorValuePath in filter) {
-        discriminatorKey = filter[discriminatorValuePath];
-      }
-      if (discriminatorFilterPath in filter) {
-        discriminatorKey = filter[discriminatorFilterPath];
-      }
-
-      const wrapperPath = subpath.replace(/\.\d+$/, '');
-      if (schematype.$isMongooseDocumentArrayElement &&
-          get(filter[wrapperPath], '$elemMatch.' + key) != null) {
-        discriminatorKey = filter[wrapperPath].$elemMatch[key];
-      }
-
-      if (discriminatorValuePath in update) {
-        discriminatorKey = update[discriminatorValuePath];
-      }
-
-      for (const filterKey of Object.keys(updatedPathsByFilter)) {
-        const schemaKey = updatedPathsByFilter[filterKey] + '.' + key;
-        const arrayFilterKey = filterKey + '.' + key;
-        if (schemaKey === discriminatorFilterPath) {
-          const filter = arrayFilters.find(filter => filter.hasOwnProperty(arrayFilterKey));
-          if (filter != null) {
-            discriminatorKey = filter[arrayFilterKey];
-          }
-        }
-      }
-
-      if (discriminatorKey == null) {
+    if ((schemaType.$isSingleNested || schemaType.$isMongooseDocumentArrayElement) &&
+    schemaType.schema.discriminators != null) {
+      const discriminators = schemaType.schema.discriminators;
+      const discriminatorKey = doc.get(subpath + '.' +
+        get(schemaType, 'schema.options.discriminatorKey'));
+      if (discriminatorKey == null || discriminators[discriminatorKey] == null) {
         continue;
       }
-
-      const discriminator = getDiscriminatorByValue(schematype.caster.discriminators, discriminatorKey);
-      const discriminatorSchema = discriminator && discriminator.schema;
-      if (discriminatorSchema == null) {
-        continue;
-      }
-
       const rest = parts.slice(i + 1).join('.');
-      schematype = discriminatorSchema.path(rest);
-      if (schematype != null) {
-        type = discriminatorSchema._getPathType(rest);
-        break;
-      }
+      return getEmbeddedDiscriminatorPath(doc.get(subpath), rest, options);
     }
   }
 
-  return { type: type, schematype: schematype };
+  // Are we getting the whole schema or just the type, 'real', 'nested', etc.
+  return typeOnly ? type : schemaType;
 };

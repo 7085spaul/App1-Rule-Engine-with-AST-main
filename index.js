@@ -1,6 +1,12 @@
+/*!
+ * Module exports.
+ */
+
 'use strict';
 
-exports.saveSubdocs = require('./saveSubdocs');
-exports.sharding = require('./sharding');
-exports.trackTransaction = require('./trackTransaction');
-exports.validateBeforeSave = require('./validateBeforeSave');
+exports.Collection = function() {
+  throw new Error('Cannot create a collection from browser library');
+};
+exports.Connection = function() {
+  throw new Error('Cannot create a connection from browser library');
+};
