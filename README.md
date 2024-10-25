@@ -1,82 +1,148 @@
-# simple-update-notifier [![GitHub stars](https://img.shields.io/github/stars/alexbrazier/simple-update-notifier?label=Star%20Project&style=social)](https://github.com/alexbrazier/simple-update-notifier/stargazers)
+# Rule Engine Application
+Hosted link: http://127.0.0.1:5500/App1-Rule-Engine-with-AST-main/views/index.html
 
-[![CI](https://github.com/alexbrazier/simple-update-notifier/workflows/Build%20and%20Deploy/badge.svg)](https://github.com/alexbrazier/simple-update-notifier/actions)
-[![Dependencies](https://img.shields.io/librariesio/release/npm/simple-update-notifier)](https://www.npmjs.com/package/simple-update-notifier?activeTab=dependencies)
-[![npm](https://img.shields.io/npm/v/simple-update-notifier)](https://www.npmjs.com/package/simple-update-notifier)
-[![npm bundle size](https://img.shields.io/bundlephobia/min/simple-update-notifier)](https://bundlephobia.com/result?p=simple-update-notifier)
-[![npm downloads](https://img.shields.io/npm/dw/simple-update-notifier)](https://www.npmjs.com/package/simple-update-notifier)
-[![License](https://img.shields.io/npm/l/simple-update-notifier)](./LICENSE)
+## Overview
 
-Simple update notifier to check for npm updates for cli applications.
+This application is a rule engine that determines user eligibility based on attributes such as age, department, salary, and experience. It uses an Abstract Syntax Tree (AST) to represent and manage conditional rules, allowing for dynamic rule creation, combination, and evaluation.
 
-<img src="./.github/demo.png" alt="Demo in terminal showing an update is required">
+<img width="943" alt="image" src="https://github.com/user-attachments/assets/78f6bdca-68aa-4818-a56f-5a50c2023b7f">
 
-Checks for updates for an npm module and outputs to the command line if there is one available. The result is cached for the specified time so it doesn't check every time the app runs.
 
-## Install
+## Features
 
-```bash
-npm install simple-update-notifier
-OR
-yarn add simple-update-notifier
+- **Create Rules:** Define rules using a string format that gets converted into an AST.
+  
+  <img width="377" alt="image" src="https://github.com/user-attachments/assets/0ffe41aa-7f9c-4fe1-9230-2091bbb16632">
+
+
+- **Combine Rules:** Combine multiple rules into a single AST for more complex evaluations.
+  
+  <img width="376" alt="image" src="https://github.com/user-attachments/assets/63145818-6936-4763-8fbe-db65f264e4ff">
+
+  
+- **Evaluate Rules:** Check if the given data meets the criteria defined by the AST.
+  
+  <img width="375" alt="image" src="https://github.com/user-attachments/assets/041e664f-1711-4bbb-b107-50d5fb7909f4">
+
+
+- **Tree Visualization:** Define or Combine Rule would should show Tree Representation.
+
+## Tech Stack
+
+- **Backend:** Node.js, Express.js
+- **Database:** MongoDB
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js and npm installed
+- MongoDB installed and running
+
+### Installation
+
+1. **Clone the Repository**
+   ```bash
+   git clone "https://github.com/7085spaul/App1-Rule-Engine-with-AST.git"
+   cd rule-engine
+   ```
+
+2. **Install Backend Dependencies**
+
+   ```bash
+   npm install
+   ```
+   
+3. **Start MongoDB**
+
+   Ensure that MongoDB is running on your local machine:
+
+   ```bash
+   mongod
+   ```
+
+4. **Start the Backend Server**
+
+   ```bash
+   nodemon server.js
+   ```
+
+## API Endpoints
+
+1. **Create a Rule**
+   - **Endpoint:** `/api/create_rule`
+   - **Method:** POST
+   - **Body:**
+
+     ```json
+     {
+       "ruleString": "((age > 30 AND department = 'Sales') OR (age < 25 AND department = 'Marketing')) AND (salary > 50000 OR experience > 5)",
+       "ruleName": "Rule 1"
+     }
+     ```
+use appropriate spaces in Rules for correct results.
+
+Rule should be in follow format:
+variable operator value 
+
+   - **Response:**
+
+     ```json
+     {
+       "_id": "605c72ef1f4e3a001f4d2e9a",
+       "rule_name": "Rule1",
+       "rule_ast": { ... }
+     }
+     ```
+
+2. **Combine Rules**
+   - **Endpoint:** `/api/rules/combine_rules`
+   - **Method:** POST
+   - **Body:**
+
+     ```json
+     {
+       "ruleIds": ["605c72ef1f4e3a001f4d2e9a", "605c730f1f4e3a001f4d2e9b"]
+       "operators: op
+     }
+     ```
+   - **Response:**
+
+     ```json
+     {
+       "type": "operator",
+       "value": operator,
+       "left": { ... },
+       "right": { ... }
+     }
+     ```
+
+3. **Evaluate a Rule**
+   - **Endpoint:** `/api/rules/evaluate_rule`
+   - **Method:** POST
+   - **Body:**
+
+     ```json
+     {
+       "rule": { ... },
+       "data": {
+         "age": 35,
+         "department": "Sales",
+         "salary": 60000,
+         "experience": 3
+       }
+     }
+     ```
+   - **Response:**
+
+     ```json
+     {
+       "result": true
+     }
+     ```
+
+## Running Tests
+
+You can add and run tests to ensure everything is working correctly. 
 ```
-
-## Usage
-
-```js
-import updateNotifier from 'simple-update-notifier';
-import packageJson from './package.json' assert { type: 'json' };
-
-updateNotifier({ pkg: packageJson });
-```
-
-### Options
-
-#### pkg
-
-Type: `object`
-
-##### name
-
-_Required_\
-Type: `string`
-
-##### version
-
-_Required_\
-Type: `string`
-
-#### updateCheckInterval
-
-Type: `number`\
-Default: `1000 * 60 * 60 * 24` _(1 day)_
-
-How often to check for updates.
-
-#### shouldNotifyInNpmScript
-
-Type: `boolean`\
-Default: `false`
-
-Allows notification to be shown when running as an npm script.
-
-#### distTag
-
-Type: `string`\
-Default: `'latest'`
-
-Which [dist-tag](https://docs.npmjs.com/adding-dist-tags-to-packages) to use to find the latest version.
-
-#### alwaysRun
-
-Type: `boolean`\
-Default: `false`
-
-When set, `updateCheckInterval` will not be respected and a check for an update will always be performed.
-
-#### debug
-
-Type: `boolean`\
-Default: `false`
-
-When set, logs explaining the decision will be output to `stderr` whenever the module opts to not print an update notification
+created by:  Nandagiri Mythri
