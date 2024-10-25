@@ -1,12 +1,19 @@
 #! /usr/bin/env node
 var cp = require('child_process');
 var fs = require('fs');
-var os = require('os');
 
-if (fs.existsSync('src')) {
-  cp.spawn('npm', ['run', 'build:dts'], { stdio: 'inherit', shell: os.platform() === 'win32' });
+var nodeMajorVersion = +process.version.match(/^v(\d+)\.\d+/)[1];
+
+if (fs.existsSync('src') && nodeMajorVersion >= 10) {
+  cp.spawnSync('npm', ['run', 'build'], { stdio: 'inherit', shell: true });
 } else {
   if (!fs.existsSync('lib')) {
-    console.warn('MongoDB: No compiled javascript present, the driver is not installed correctly.');
+    console.warn('BSON: No compiled javascript present, the library is not installed correctly.');
+    if (nodeMajorVersion < 10) {
+      console.warn(
+        'This library can only be compiled in nodejs version 10 or later, currently running: ' +
+          nodeMajorVersion
+      );
+    }
   }
 }

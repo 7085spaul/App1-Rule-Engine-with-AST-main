@@ -1,84 +1,39 @@
-'use strict';
+var concatMap = require('../');
+var test = require('tape');
 
-/*!
- * ignore
- */
+test('empty or not', function (t) {
+    var xs = [ 1, 2, 3, 4, 5, 6 ];
+    var ixes = [];
+    var ys = concatMap(xs, function (x, ix) {
+        ixes.push(ix);
+        return x % 2 ? [ x - 0.1, x, x + 0.1 ] : [];
+    });
+    t.same(ys, [ 0.9, 1, 1.1, 2.9, 3, 3.1, 4.9, 5, 5.1 ]);
+    t.same(ixes, [ 0, 1, 2, 3, 4, 5 ]);
+    t.end();
+});
 
-const MongooseMap = require('../types/map');
-const SchemaMapOptions = require('../options/schemaMapOptions');
-const SchemaType = require('../schemaType');
-/*!
- * ignore
- */
+test('always something', function (t) {
+    var xs = [ 'a', 'b', 'c', 'd' ];
+    var ys = concatMap(xs, function (x) {
+        return x === 'b' ? [ 'B', 'B', 'B' ] : [ x ];
+    });
+    t.same(ys, [ 'a', 'B', 'B', 'B', 'c', 'd' ]);
+    t.end();
+});
 
-class SchemaMap extends SchemaType {
-  constructor(key, options) {
-    super(key, options, 'Map');
-    this.$isSchemaMap = true;
-  }
+test('scalars', function (t) {
+    var xs = [ 'a', 'b', 'c', 'd' ];
+    var ys = concatMap(xs, function (x) {
+        return x === 'b' ? [ 'B', 'B', 'B' ] : x;
+    });
+    t.same(ys, [ 'a', 'B', 'B', 'B', 'c', 'd' ]);
+    t.end();
+});
 
-  set(option, value) {
-    return SchemaType.set(option, value);
-  }
-
-  cast(val, doc, init) {
-    if (val instanceof MongooseMap) {
-      return val;
-    }
-
-    const path = this.path;
-
-    if (init) {
-      const map = new MongooseMap({}, path, doc, this.$__schemaType);
-
-      if (val instanceof global.Map) {
-        for (const key of val.keys()) {
-          let _val = val.get(key);
-          if (_val == null) {
-            _val = map.$__schemaType._castNullish(_val);
-          } else {
-            _val = map.$__schemaType.cast(_val, doc, true, null, { path: path + '.' + key });
-          }
-          map.$init(key, _val);
-        }
-      } else {
-        for (const key of Object.keys(val)) {
-          let _val = val[key];
-          if (_val == null) {
-            _val = map.$__schemaType._castNullish(_val);
-          } else {
-            _val = map.$__schemaType.cast(_val, doc, true, null, { path: path + '.' + key });
-          }
-          map.$init(key, _val);
-        }
-      }
-
-      return map;
-    }
-
-    return new MongooseMap(val, path, doc, this.$__schemaType);
-  }
-
-  clone() {
-    const schematype = super.clone();
-
-    if (this.$__schemaType != null) {
-      schematype.$__schemaType = this.$__schemaType.clone();
-    }
-    return schematype;
-  }
-}
-
-/**
- * This schema type's name, to defend against minifiers that mangle
- * function names.
- *
- * @api public
- */
-SchemaMap.schemaName = 'Map';
-
-SchemaMap.prototype.OptionsConstructor = SchemaMapOptions;
-
-SchemaMap.defaultOptions = {};
-
-module.exports = SchemaMap;
+test('undefs', function (t) {
+    var xs = [ 'a', 'b', 'c', 'd' ];
+    var ys = concatMap(xs, function () {});
+    t.same(ys, [ undefined, undefined, undefined, undefined ]);
+    t.end();
+});
