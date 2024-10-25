@@ -1,673 +1,973 @@
-/*!
- * express
- * Copyright(c) 2009-2013 TJ Holowaychuk
- * Copyright(c) 2013 Roman Shtylman
- * Copyright(c) 2014-2015 Douglas Christopher Wilson
- * MIT Licensed
- */
-
 'use strict';
 
-/**
- * Module dependencies.
- * @private
- */
+const { EventEmitter } = require('events');
+const fs = require('fs');
+const sysPath = require('path');
+const { promisify } = require('util');
+const readdirp = require('readdirp');
+const anymatch = require('anymatch').default;
+const globParent = require('glob-parent');
+const isGlob = require('is-glob');
+const braces = require('braces');
+const normalizePath = require('normalize-path');
 
-var Route = require('./route');
-var Layer = require('./layer');
-var methods = require('methods');
-var mixin = require('utils-merge');
-var debug = require('debug')('express:router');
-var deprecate = require('depd')('express');
-var flatten = require('array-flatten');
-var parseUrl = require('parseurl');
-var setPrototypeOf = require('setprototypeof')
+const NodeFsHandler = require('./lib/nodefs-handler');
+const FsEventsHandler = require('./lib/fsevents-handler');
+const {
+  EV_ALL,
+  EV_READY,
+  EV_ADD,
+  EV_CHANGE,
+  EV_UNLINK,
+  EV_ADD_DIR,
+  EV_UNLINK_DIR,
+  EV_RAW,
+  EV_ERROR,
 
-/**
- * Module variables.
- * @private
- */
+  STR_CLOSE,
+  STR_END,
 
-var objectRegExp = /^\[object (\S+)\]$/;
-var slice = Array.prototype.slice;
-var toString = Object.prototype.toString;
+  BACK_SLASH_RE,
+  DOUBLE_SLASH_RE,
+  SLASH_OR_BACK_SLASH_RE,
+  DOT_RE,
+  REPLACER_RE,
 
-/**
- * Initialize a new `Router` with the given `options`.
- *
- * @param {Object} [options]
- * @return {Router} which is a callable function
- * @public
- */
+  SLASH,
+  SLASH_SLASH,
+  BRACE_START,
+  BANG,
+  ONE_DOT,
+  TWO_DOTS,
+  GLOBSTAR,
+  SLASH_GLOBSTAR,
+  ANYMATCH_OPTS,
+  STRING_TYPE,
+  FUNCTION_TYPE,
+  EMPTY_STR,
+  EMPTY_FN,
 
-var proto = module.exports = function(options) {
-  var opts = options || {};
+  isWindows,
+  isMacos,
+  isIBMi
+} = require('./lib/constants');
 
-  function router(req, res, next) {
-    router.handle(req, res, next);
-  }
-
-  // mixin Router class functions
-  setPrototypeOf(router, proto)
-
-  router.params = {};
-  router._params = [];
-  router.caseSensitive = opts.caseSensitive;
-  router.mergeParams = opts.mergeParams;
-  router.strict = opts.strict;
-  router.stack = [];
-
-  return router;
-};
-
-/**
- * Map the given param placeholder `name`(s) to the given callback.
- *
- * Parameter mapping is used to provide pre-conditions to routes
- * which use normalized placeholders. For example a _:user_id_ parameter
- * could automatically load a user's information from the database without
- * any additional code,
- *
- * The callback uses the same signature as middleware, the only difference
- * being that the value of the placeholder is passed, in this case the _id_
- * of the user. Once the `next()` function is invoked, just like middleware
- * it will continue on to execute the route, or subsequent parameter functions.
- *
- * Just like in middleware, you must either respond to the request or call next
- * to avoid stalling the request.
- *
- *  app.param('user_id', function(req, res, next, id){
- *    User.find(id, function(err, user){
- *      if (err) {
- *        return next(err);
- *      } else if (!user) {
- *        return next(new Error('failed to load user'));
- *      }
- *      req.user = user;
- *      next();
- *    });
- *  });
- *
- * @param {String} name
- * @param {Function} fn
- * @return {app} for chaining
- * @public
- */
-
-proto.param = function param(name, fn) {
-  // param logic
-  if (typeof name === 'function') {
-    deprecate('router.param(fn): Refactor to use path params');
-    this._params.push(name);
-    return;
-  }
-
-  // apply param functions
-  var params = this._params;
-  var len = params.length;
-  var ret;
-
-  if (name[0] === ':') {
-    deprecate('router.param(' + JSON.stringify(name) + ', fn): Use router.param(' + JSON.stringify(name.slice(1)) + ', fn) instead')
-    name = name.slice(1)
-  }
-
-  for (var i = 0; i < len; ++i) {
-    if (ret = params[i](name, fn)) {
-      fn = ret;
-    }
-  }
-
-  // ensure we end up with a
-  // middleware function
-  if ('function' !== typeof fn) {
-    throw new Error('invalid param() call for ' + name + ', got ' + fn);
-  }
-
-  (this.params[name] = this.params[name] || []).push(fn);
-  return this;
-};
+const stat = promisify(fs.stat);
+const readdir = promisify(fs.readdir);
 
 /**
- * Dispatch a req, res into the router.
- * @private
+ * @typedef {String} Path
+ * @typedef {'all'|'add'|'addDir'|'change'|'unlink'|'unlinkDir'|'raw'|'error'|'ready'} EventName
+ * @typedef {'readdir'|'watch'|'add'|'remove'|'change'} ThrottleType
  */
 
-proto.handle = function handle(req, res, out) {
-  var self = this;
+/**
+ *
+ * @typedef {Object} WatchHelpers
+ * @property {Boolean} followSymlinks
+ * @property {'stat'|'lstat'} statMethod
+ * @property {Path} path
+ * @property {Path} watchPath
+ * @property {Function} entryPath
+ * @property {Boolean} hasGlob
+ * @property {Object} globFilter
+ * @property {Function} filterPath
+ * @property {Function} filterDir
+ */
 
-  debug('dispatching %s %s', req.method, req.url);
-
-  var idx = 0;
-  var protohost = getProtohost(req.url) || ''
-  var removed = '';
-  var slashAdded = false;
-  var sync = 0
-  var paramcalled = {};
-
-  // store options for OPTIONS request
-  // only used if OPTIONS request
-  var options = [];
-
-  // middleware and routes
-  var stack = self.stack;
-
-  // manage inter-router variables
-  var parentParams = req.params;
-  var parentUrl = req.baseUrl || '';
-  var done = restore(out, req, 'baseUrl', 'next', 'params');
-
-  // setup next layer
-  req.next = next;
-
-  // for options requests, respond with a default if nothing else responds
-  if (req.method === 'OPTIONS') {
-    done = wrap(done, function(old, err) {
-      if (err || options.length === 0) return old(err);
-      sendOptionsResponse(res, options, old);
-    });
-  }
-
-  // setup basic req values
-  req.baseUrl = parentUrl;
-  req.originalUrl = req.originalUrl || req.url;
-
-  next();
-
-  function next(err) {
-    var layerError = err === 'route'
-      ? null
-      : err;
-
-    // remove added slash
-    if (slashAdded) {
-      req.url = req.url.slice(1)
-      slashAdded = false;
-    }
-
-    // restore altered req.url
-    if (removed.length !== 0) {
-      req.baseUrl = parentUrl;
-      req.url = protohost + removed + req.url.slice(protohost.length)
-      removed = '';
-    }
-
-    // signal to exit router
-    if (layerError === 'router') {
-      setImmediate(done, null)
-      return
-    }
-
-    // no more matching layers
-    if (idx >= stack.length) {
-      setImmediate(done, layerError);
-      return;
-    }
-
-    // max sync stack
-    if (++sync > 100) {
-      return setImmediate(next, err)
-    }
-
-    // get pathname of request
-    var path = getPathname(req);
-
-    if (path == null) {
-      return done(layerError);
-    }
-
-    // find next matching layer
-    var layer;
-    var match;
-    var route;
-
-    while (match !== true && idx < stack.length) {
-      layer = stack[idx++];
-      match = matchLayer(layer, path);
-      route = layer.route;
-
-      if (typeof match !== 'boolean') {
-        // hold on to layerError
-        layerError = layerError || match;
-      }
-
-      if (match !== true) {
-        continue;
-      }
-
-      if (!route) {
-        // process non-route handlers normally
-        continue;
-      }
-
-      if (layerError) {
-        // routes do not match with a pending error
-        match = false;
-        continue;
-      }
-
-      var method = req.method;
-      var has_method = route._handles_method(method);
-
-      // build up automatic options response
-      if (!has_method && method === 'OPTIONS') {
-        appendMethods(options, route._options());
-      }
-
-      // don't even bother matching route
-      if (!has_method && method !== 'HEAD') {
-        match = false;
-      }
-    }
-
-    // no match
-    if (match !== true) {
-      return done(layerError);
-    }
-
-    // store route for dispatch on change
-    if (route) {
-      req.route = route;
-    }
-
-    // Capture one-time layer values
-    req.params = self.mergeParams
-      ? mergeParams(layer.params, parentParams)
-      : layer.params;
-    var layerPath = layer.path;
-
-    // this should be done for the layer
-    self.process_params(layer, paramcalled, req, res, function (err) {
-      if (err) {
-        next(layerError || err)
-      } else if (route) {
-        layer.handle_request(req, res, next)
-      } else {
-        trim_prefix(layer, layerError, layerPath, path)
-      }
-
-      sync = 0
-    });
-  }
-
-  function trim_prefix(layer, layerError, layerPath, path) {
-    if (layerPath.length !== 0) {
-      // Validate path is a prefix match
-      if (layerPath !== path.slice(0, layerPath.length)) {
-        next(layerError)
-        return
-      }
-
-      // Validate path breaks on a path separator
-      var c = path[layerPath.length]
-      if (c && c !== '/' && c !== '.') return next(layerError)
-
-      // Trim off the part of the url that matches the route
-      // middleware (.use stuff) needs to have the path stripped
-      debug('trim prefix (%s) from url %s', layerPath, req.url);
-      removed = layerPath;
-      req.url = protohost + req.url.slice(protohost.length + removed.length)
-
-      // Ensure leading slash
-      if (!protohost && req.url[0] !== '/') {
-        req.url = '/' + req.url;
-        slashAdded = true;
-      }
-
-      // Setup base URL (no trailing slash)
-      req.baseUrl = parentUrl + (removed[removed.length - 1] === '/'
-        ? removed.substring(0, removed.length - 1)
-        : removed);
-    }
-
-    debug('%s %s : %s', layer.name, layerPath, req.originalUrl);
-
-    if (layerError) {
-      layer.handle_error(layerError, req, res, next);
+const arrify = (value = []) => Array.isArray(value) ? value : [value];
+const flatten = (list, result = []) => {
+  list.forEach(item => {
+    if (Array.isArray(item)) {
+      flatten(item, result);
     } else {
-      layer.handle_request(req, res, next);
+      result.push(item);
     }
-  }
+  });
+  return result;
 };
 
+const unifyPaths = (paths_) => {
+  /**
+   * @type {Array<String>}
+   */
+  const paths = flatten(arrify(paths_));
+  if (!paths.every(p => typeof p === STRING_TYPE)) {
+    throw new TypeError(`Non-string provided as watch path: ${paths}`);
+  }
+  return paths.map(normalizePathToUnix);
+};
+
+// If SLASH_SLASH occurs at the beginning of path, it is not replaced
+//     because "//StoragePC/DrivePool/Movies" is a valid network path
+const toUnix = (string) => {
+  let str = string.replace(BACK_SLASH_RE, SLASH);
+  let prepend = false;
+  if (str.startsWith(SLASH_SLASH)) {
+    prepend = true;
+  }
+  while (str.match(DOUBLE_SLASH_RE)) {
+    str = str.replace(DOUBLE_SLASH_RE, SLASH);
+  }
+  if (prepend) {
+    str = SLASH + str;
+  }
+  return str;
+};
+
+// Our version of upath.normalize
+// TODO: this is not equal to path-normalize module - investigate why
+const normalizePathToUnix = (path) => toUnix(sysPath.normalize(toUnix(path)));
+
+const normalizeIgnored = (cwd = EMPTY_STR) => (path) => {
+  if (typeof path !== STRING_TYPE) return path;
+  return normalizePathToUnix(sysPath.isAbsolute(path) ? path : sysPath.join(cwd, path));
+};
+
+const getAbsolutePath = (path, cwd) => {
+  if (sysPath.isAbsolute(path)) {
+    return path;
+  }
+  if (path.startsWith(BANG)) {
+    return BANG + sysPath.join(cwd, path.slice(1));
+  }
+  return sysPath.join(cwd, path);
+};
+
+const undef = (opts, key) => opts[key] === undefined;
+
 /**
- * Process any parameters for the layer.
- * @private
+ * Directory entry.
+ * @property {Path} path
+ * @property {Set<Path>} items
  */
-
-proto.process_params = function process_params(layer, called, req, res, done) {
-  var params = this.params;
-
-  // captured parameters from the layer, keys and values
-  var keys = layer.keys;
-
-  // fast track
-  if (!keys || keys.length === 0) {
-    return done();
+class DirEntry {
+  /**
+   * @param {Path} dir
+   * @param {Function} removeWatcher
+   */
+  constructor(dir, removeWatcher) {
+    this.path = dir;
+    this._removeWatcher = removeWatcher;
+    /** @type {Set<Path>} */
+    this.items = new Set();
   }
 
-  var i = 0;
-  var name;
-  var paramIndex = 0;
-  var key;
-  var paramVal;
-  var paramCallbacks;
-  var paramCalled;
+  add(item) {
+    const {items} = this;
+    if (!items) return;
+    if (item !== ONE_DOT && item !== TWO_DOTS) items.add(item);
+  }
 
-  // process params in order
-  // param callbacks can be async
-  function param(err) {
-    if (err) {
-      return done(err);
+  async remove(item) {
+    const {items} = this;
+    if (!items) return;
+    items.delete(item);
+    if (items.size > 0) return;
+
+    const dir = this.path;
+    try {
+      await readdir(dir);
+    } catch (err) {
+      if (this._removeWatcher) {
+        this._removeWatcher(sysPath.dirname(dir), sysPath.basename(dir));
+      }
+    }
+  }
+
+  has(item) {
+    const {items} = this;
+    if (!items) return;
+    return items.has(item);
+  }
+
+  /**
+   * @returns {Array<String>}
+   */
+  getChildren() {
+    const {items} = this;
+    if (!items) return;
+    return [...items.values()];
+  }
+
+  dispose() {
+    this.items.clear();
+    delete this.path;
+    delete this._removeWatcher;
+    delete this.items;
+    Object.freeze(this);
+  }
+}
+
+const STAT_METHOD_F = 'stat';
+const STAT_METHOD_L = 'lstat';
+class WatchHelper {
+  constructor(path, watchPath, follow, fsw) {
+    this.fsw = fsw;
+    this.path = path = path.replace(REPLACER_RE, EMPTY_STR);
+    this.watchPath = watchPath;
+    this.fullWatchPath = sysPath.resolve(watchPath);
+    this.hasGlob = watchPath !== path;
+    /** @type {object|boolean} */
+    if (path === EMPTY_STR) this.hasGlob = false;
+    this.globSymlink = this.hasGlob && follow ? undefined : false;
+    this.globFilter = this.hasGlob ? anymatch(path, undefined, ANYMATCH_OPTS) : false;
+    this.dirParts = this.getDirParts(path);
+    this.dirParts.forEach((parts) => {
+      if (parts.length > 1) parts.pop();
+    });
+    this.followSymlinks = follow;
+    this.statMethod = follow ? STAT_METHOD_F : STAT_METHOD_L;
+  }
+
+  checkGlobSymlink(entry) {
+    // only need to resolve once
+    // first entry should always have entry.parentDir === EMPTY_STR
+    if (this.globSymlink === undefined) {
+      this.globSymlink = entry.fullParentDir === this.fullWatchPath ?
+        false : {realPath: entry.fullParentDir, linkPath: this.fullWatchPath};
     }
 
-    if (i >= keys.length ) {
-      return done();
+    if (this.globSymlink) {
+      return entry.fullPath.replace(this.globSymlink.realPath, this.globSymlink.linkPath);
     }
 
-    paramIndex = 0;
-    key = keys[i++];
-    name = key.name;
-    paramVal = req.params[name];
-    paramCallbacks = params[name];
-    paramCalled = called[name];
+    return entry.fullPath;
+  }
 
-    if (paramVal === undefined || !paramCallbacks) {
-      return param();
+  entryPath(entry) {
+    return sysPath.join(this.watchPath,
+      sysPath.relative(this.watchPath, this.checkGlobSymlink(entry))
+    );
+  }
+
+  filterPath(entry) {
+    const {stats} = entry;
+    if (stats && stats.isSymbolicLink()) return this.filterDir(entry);
+    const resolvedPath = this.entryPath(entry);
+    const matchesGlob = this.hasGlob && typeof this.globFilter === FUNCTION_TYPE ?
+      this.globFilter(resolvedPath) : true;
+    return matchesGlob &&
+      this.fsw._isntIgnored(resolvedPath, stats) &&
+      this.fsw._hasReadPermissions(stats);
+  }
+
+  getDirParts(path) {
+    if (!this.hasGlob) return [];
+    const parts = [];
+    const expandedPath = path.includes(BRACE_START) ? braces.expand(path) : [path];
+    expandedPath.forEach((path) => {
+      parts.push(sysPath.relative(this.watchPath, path).split(SLASH_OR_BACK_SLASH_RE));
+    });
+    return parts;
+  }
+
+  filterDir(entry) {
+    if (this.hasGlob) {
+      const entryParts = this.getDirParts(this.checkGlobSymlink(entry));
+      let globstar = false;
+      this.unmatchedGlob = !this.dirParts.some((parts) => {
+        return parts.every((part, i) => {
+          if (part === GLOBSTAR) globstar = true;
+          return globstar || !entryParts[0][i] || anymatch(part, entryParts[0][i], ANYMATCH_OPTS);
+        });
+      });
+    }
+    return !this.unmatchedGlob && this.fsw._isntIgnored(this.entryPath(entry), entry.stats);
+  }
+}
+
+/**
+ * Watches files & directories for changes. Emitted events:
+ * `add`, `addDir`, `change`, `unlink`, `unlinkDir`, `all`, `error`
+ *
+ *     new FSWatcher()
+ *       .add(directories)
+ *       .on('add', path => log('File', path, 'was added'))
+ */
+class FSWatcher extends EventEmitter {
+// Not indenting methods for history sake; for now.
+constructor(_opts) {
+  super();
+
+  const opts = {};
+  if (_opts) Object.assign(opts, _opts); // for frozen objects
+
+  /** @type {Map<String, DirEntry>} */
+  this._watched = new Map();
+  /** @type {Map<String, Array>} */
+  this._closers = new Map();
+  /** @type {Set<String>} */
+  this._ignoredPaths = new Set();
+
+  /** @type {Map<ThrottleType, Map>} */
+  this._throttled = new Map();
+
+  /** @type {Map<Path, String|Boolean>} */
+  this._symlinkPaths = new Map();
+
+  this._streams = new Set();
+  this.closed = false;
+
+  // Set up default options.
+  if (undef(opts, 'persistent')) opts.persistent = true;
+  if (undef(opts, 'ignoreInitial')) opts.ignoreInitial = false;
+  if (undef(opts, 'ignorePermissionErrors')) opts.ignorePermissionErrors = false;
+  if (undef(opts, 'interval')) opts.interval = 100;
+  if (undef(opts, 'binaryInterval')) opts.binaryInterval = 300;
+  if (undef(opts, 'disableGlobbing')) opts.disableGlobbing = false;
+  opts.enableBinaryInterval = opts.binaryInterval !== opts.interval;
+
+  // Enable fsevents on OS X when polling isn't explicitly enabled.
+  if (undef(opts, 'useFsEvents')) opts.useFsEvents = !opts.usePolling;
+
+  // If we can't use fsevents, ensure the options reflect it's disabled.
+  const canUseFsEvents = FsEventsHandler.canUse();
+  if (!canUseFsEvents) opts.useFsEvents = false;
+
+  // Use polling on Mac if not using fsevents.
+  // Other platforms use non-polling fs_watch.
+  if (undef(opts, 'usePolling') && !opts.useFsEvents) {
+    opts.usePolling = isMacos;
+  }
+
+  // Always default to polling on IBM i because fs.watch() is not available on IBM i.
+  if(isIBMi) {
+    opts.usePolling = true;
+  }
+
+  // Global override (useful for end-developers that need to force polling for all
+  // instances of chokidar, regardless of usage/dependency depth)
+  const envPoll = process.env.CHOKIDAR_USEPOLLING;
+  if (envPoll !== undefined) {
+    const envLower = envPoll.toLowerCase();
+
+    if (envLower === 'false' || envLower === '0') {
+      opts.usePolling = false;
+    } else if (envLower === 'true' || envLower === '1') {
+      opts.usePolling = true;
+    } else {
+      opts.usePolling = !!envLower;
+    }
+  }
+  const envInterval = process.env.CHOKIDAR_INTERVAL;
+  if (envInterval) {
+    opts.interval = Number.parseInt(envInterval, 10);
+  }
+
+  // Editor atomic write normalization enabled by default with fs.watch
+  if (undef(opts, 'atomic')) opts.atomic = !opts.usePolling && !opts.useFsEvents;
+  if (opts.atomic) this._pendingUnlinks = new Map();
+
+  if (undef(opts, 'followSymlinks')) opts.followSymlinks = true;
+
+  if (undef(opts, 'awaitWriteFinish')) opts.awaitWriteFinish = false;
+  if (opts.awaitWriteFinish === true) opts.awaitWriteFinish = {};
+  const awf = opts.awaitWriteFinish;
+  if (awf) {
+    if (!awf.stabilityThreshold) awf.stabilityThreshold = 2000;
+    if (!awf.pollInterval) awf.pollInterval = 100;
+    this._pendingWrites = new Map();
+  }
+  if (opts.ignored) opts.ignored = arrify(opts.ignored);
+
+  let readyCalls = 0;
+  this._emitReady = () => {
+    readyCalls++;
+    if (readyCalls >= this._readyCount) {
+      this._emitReady = EMPTY_FN;
+      this._readyEmitted = true;
+      // use process.nextTick to allow time for listener to be bound
+      process.nextTick(() => this.emit(EV_READY));
+    }
+  };
+  this._emitRaw = (...args) => this.emit(EV_RAW, ...args);
+  this._readyEmitted = false;
+  this.options = opts;
+
+  // Initialize with proper watcher.
+  if (opts.useFsEvents) {
+    this._fsEventsHandler = new FsEventsHandler(this);
+  } else {
+    this._nodeFsHandler = new NodeFsHandler(this);
+  }
+
+  // You’re frozen when your heart’s not open.
+  Object.freeze(opts);
+}
+
+// Public methods
+
+/**
+ * Adds paths to be watched on an existing FSWatcher instance
+ * @param {Path|Array<Path>} paths_
+ * @param {String=} _origAdd private; for handling non-existent paths to be watched
+ * @param {Boolean=} _internal private; indicates a non-user add
+ * @returns {FSWatcher} for chaining
+ */
+add(paths_, _origAdd, _internal) {
+  const {cwd, disableGlobbing} = this.options;
+  this.closed = false;
+  let paths = unifyPaths(paths_);
+  if (cwd) {
+    paths = paths.map((path) => {
+      const absPath = getAbsolutePath(path, cwd);
+
+      // Check `path` instead of `absPath` because the cwd portion can't be a glob
+      if (disableGlobbing || !isGlob(path)) {
+        return absPath;
+      }
+      return normalizePath(absPath);
+    });
+  }
+
+  // set aside negated glob strings
+  paths = paths.filter((path) => {
+    if (path.startsWith(BANG)) {
+      this._ignoredPaths.add(path.slice(1));
+      return false;
     }
 
-    // param previously called with same value or error occurred
-    if (paramCalled && (paramCalled.match === paramVal
-      || (paramCalled.error && paramCalled.error !== 'route'))) {
-      // restore value
-      req.params[name] = paramCalled.value;
+    // if a path is being added that was previously ignored, stop ignoring it
+    this._ignoredPaths.delete(path);
+    this._ignoredPaths.delete(path + SLASH_GLOBSTAR);
 
-      // next param
-      return param(paramCalled.error);
+    // reset the cached userIgnored anymatch fn
+    // to make ignoredPaths changes effective
+    this._userIgnored = undefined;
+
+    return true;
+  });
+
+  if (this.options.useFsEvents && this._fsEventsHandler) {
+    if (!this._readyCount) this._readyCount = paths.length;
+    if (this.options.persistent) this._readyCount += paths.length;
+    paths.forEach((path) => this._fsEventsHandler._addToFsEvents(path));
+  } else {
+    if (!this._readyCount) this._readyCount = 0;
+    this._readyCount += paths.length;
+    Promise.all(
+      paths.map(async path => {
+        const res = await this._nodeFsHandler._addToNodeFs(path, !_internal, 0, 0, _origAdd);
+        if (res) this._emitReady();
+        return res;
+      })
+    ).then(results => {
+      if (this.closed) return;
+      results.filter(item => item).forEach(item => {
+        this.add(sysPath.dirname(item), sysPath.basename(_origAdd || item));
+      });
+    });
+  }
+
+  return this;
+}
+
+/**
+ * Close watchers or start ignoring events from specified paths.
+ * @param {Path|Array<Path>} paths_ - string or array of strings, file/directory paths and/or globs
+ * @returns {FSWatcher} for chaining
+*/
+unwatch(paths_) {
+  if (this.closed) return this;
+  const paths = unifyPaths(paths_);
+  const {cwd} = this.options;
+
+  paths.forEach((path) => {
+    // convert to absolute path unless relative path already matches
+    if (!sysPath.isAbsolute(path) && !this._closers.has(path)) {
+      if (cwd) path = sysPath.join(cwd, path);
+      path = sysPath.resolve(path);
     }
 
-    called[name] = paramCalled = {
-      error: null,
-      match: paramVal,
-      value: paramVal
+    this._closePath(path);
+
+    this._ignoredPaths.add(path);
+    if (this._watched.has(path)) {
+      this._ignoredPaths.add(path + SLASH_GLOBSTAR);
+    }
+
+    // reset the cached userIgnored anymatch fn
+    // to make ignoredPaths changes effective
+    this._userIgnored = undefined;
+  });
+
+  return this;
+}
+
+/**
+ * Close watchers and remove all listeners from watched paths.
+ * @returns {Promise<void>}.
+*/
+close() {
+  if (this.closed) return this._closePromise;
+  this.closed = true;
+
+  // Memory management.
+  this.removeAllListeners();
+  const closers = [];
+  this._closers.forEach(closerList => closerList.forEach(closer => {
+    const promise = closer();
+    if (promise instanceof Promise) closers.push(promise);
+  }));
+  this._streams.forEach(stream => stream.destroy());
+  this._userIgnored = undefined;
+  this._readyCount = 0;
+  this._readyEmitted = false;
+  this._watched.forEach(dirent => dirent.dispose());
+  ['closers', 'watched', 'streams', 'symlinkPaths', 'throttled'].forEach(key => {
+    this[`_${key}`].clear();
+  });
+
+  this._closePromise = closers.length ? Promise.all(closers).then(() => undefined) : Promise.resolve();
+  return this._closePromise;
+}
+
+/**
+ * Expose list of watched paths
+ * @returns {Object} for chaining
+*/
+getWatched() {
+  const watchList = {};
+  this._watched.forEach((entry, dir) => {
+    const key = this.options.cwd ? sysPath.relative(this.options.cwd, dir) : dir;
+    watchList[key || ONE_DOT] = entry.getChildren().sort();
+  });
+  return watchList;
+}
+
+emitWithAll(event, args) {
+  this.emit(...args);
+  if (event !== EV_ERROR) this.emit(EV_ALL, ...args);
+}
+
+// Common helpers
+// --------------
+
+/**
+ * Normalize and emit events.
+ * Calling _emit DOES NOT MEAN emit() would be called!
+ * @param {EventName} event Type of event
+ * @param {Path} path File or directory path
+ * @param {*=} val1 arguments to be passed with event
+ * @param {*=} val2
+ * @param {*=} val3
+ * @returns the error if defined, otherwise the value of the FSWatcher instance's `closed` flag
+ */
+async _emit(event, path, val1, val2, val3) {
+  if (this.closed) return;
+
+  const opts = this.options;
+  if (isWindows) path = sysPath.normalize(path);
+  if (opts.cwd) path = sysPath.relative(opts.cwd, path);
+  /** @type Array<any> */
+  const args = [event, path];
+  if (val3 !== undefined) args.push(val1, val2, val3);
+  else if (val2 !== undefined) args.push(val1, val2);
+  else if (val1 !== undefined) args.push(val1);
+
+  const awf = opts.awaitWriteFinish;
+  let pw;
+  if (awf && (pw = this._pendingWrites.get(path))) {
+    pw.lastChange = new Date();
+    return this;
+  }
+
+  if (opts.atomic) {
+    if (event === EV_UNLINK) {
+      this._pendingUnlinks.set(path, args);
+      setTimeout(() => {
+        this._pendingUnlinks.forEach((entry, path) => {
+          this.emit(...entry);
+          this.emit(EV_ALL, ...entry);
+          this._pendingUnlinks.delete(path);
+        });
+      }, typeof opts.atomic === 'number' ? opts.atomic : 100);
+      return this;
+    }
+    if (event === EV_ADD && this._pendingUnlinks.has(path)) {
+      event = args[0] = EV_CHANGE;
+      this._pendingUnlinks.delete(path);
+    }
+  }
+
+  if (awf && (event === EV_ADD || event === EV_CHANGE) && this._readyEmitted) {
+    const awfEmit = (err, stats) => {
+      if (err) {
+        event = args[0] = EV_ERROR;
+        args[1] = err;
+        this.emitWithAll(event, args);
+      } else if (stats) {
+        // if stats doesn't exist the file must have been deleted
+        if (args.length > 2) {
+          args[2] = stats;
+        } else {
+          args.push(stats);
+        }
+        this.emitWithAll(event, args);
+      }
     };
 
-    paramCallback();
+    this._awaitWriteFinish(path, awf.stabilityThreshold, event, awfEmit);
+    return this;
   }
 
-  // single param callbacks
-  function paramCallback(err) {
-    var fn = paramCallbacks[paramIndex++];
+  if (event === EV_CHANGE) {
+    const isThrottled = !this._throttle(EV_CHANGE, path, 50);
+    if (isThrottled) return this;
+  }
 
-    // store updated value
-    paramCalled.value = req.params[key.name];
-
-    if (err) {
-      // store error
-      paramCalled.error = err;
-      param(err);
-      return;
-    }
-
-    if (!fn) return param();
-
+  if (opts.alwaysStat && val1 === undefined &&
+    (event === EV_ADD || event === EV_ADD_DIR || event === EV_CHANGE)
+  ) {
+    const fullPath = opts.cwd ? sysPath.join(opts.cwd, path) : path;
+    let stats;
     try {
-      fn(req, res, paramCallback, paramVal, key.name);
-    } catch (e) {
-      paramCallback(e);
-    }
+      stats = await stat(fullPath);
+    } catch (err) {}
+    // Suppress event when fs_stat fails, to avoid sending undefined 'stat'
+    if (!stats || this.closed) return;
+    args.push(stats);
   }
-
-  param();
-};
-
-/**
- * Use the given middleware function, with optional path, defaulting to "/".
- *
- * Use (like `.all`) will run for any http METHOD, but it will not add
- * handlers for those methods so OPTIONS requests will not consider `.use`
- * functions even if they could respond.
- *
- * The other difference is that _route_ path is stripped and not visible
- * to the handler function. The main effect of this feature is that mounted
- * handlers can operate without any code changes regardless of the "prefix"
- * pathname.
- *
- * @public
- */
-
-proto.use = function use(fn) {
-  var offset = 0;
-  var path = '/';
-
-  // default path to '/'
-  // disambiguate router.use([fn])
-  if (typeof fn !== 'function') {
-    var arg = fn;
-
-    while (Array.isArray(arg) && arg.length !== 0) {
-      arg = arg[0];
-    }
-
-    // first arg is the path
-    if (typeof arg !== 'function') {
-      offset = 1;
-      path = fn;
-    }
-  }
-
-  var callbacks = flatten(slice.call(arguments, offset));
-
-  if (callbacks.length === 0) {
-    throw new TypeError('Router.use() requires a middleware function')
-  }
-
-  for (var i = 0; i < callbacks.length; i++) {
-    var fn = callbacks[i];
-
-    if (typeof fn !== 'function') {
-      throw new TypeError('Router.use() requires a middleware function but got a ' + gettype(fn))
-    }
-
-    // add the middleware
-    debug('use %o %s', path, fn.name || '<anonymous>')
-
-    var layer = new Layer(path, {
-      sensitive: this.caseSensitive,
-      strict: false,
-      end: false
-    }, fn);
-
-    layer.route = undefined;
-
-    this.stack.push(layer);
-  }
+  this.emitWithAll(event, args);
 
   return this;
-};
-
-/**
- * Create a new Route for the given path.
- *
- * Each route contains a separate middleware stack and VERB handlers.
- *
- * See the Route api documentation for details on adding handlers
- * and middleware to routes.
- *
- * @param {String} path
- * @return {Route}
- * @public
- */
-
-proto.route = function route(path) {
-  var route = new Route(path);
-
-  var layer = new Layer(path, {
-    sensitive: this.caseSensitive,
-    strict: this.strict,
-    end: true
-  }, route.dispatch.bind(route));
-
-  layer.route = route;
-
-  this.stack.push(layer);
-  return route;
-};
-
-// create Router#VERB functions
-methods.concat('all').forEach(function(method){
-  proto[method] = function(path){
-    var route = this.route(path)
-    route[method].apply(route, slice.call(arguments, 1));
-    return this;
-  };
-});
-
-// append methods to a list of methods
-function appendMethods(list, addition) {
-  for (var i = 0; i < addition.length; i++) {
-    var method = addition[i];
-    if (list.indexOf(method) === -1) {
-      list.push(method);
-    }
-  }
-}
-
-// get pathname of request
-function getPathname(req) {
-  try {
-    return parseUrl(req).pathname;
-  } catch (err) {
-    return undefined;
-  }
-}
-
-// Get get protocol + host for a URL
-function getProtohost(url) {
-  if (typeof url !== 'string' || url.length === 0 || url[0] === '/') {
-    return undefined
-  }
-
-  var searchIndex = url.indexOf('?')
-  var pathLength = searchIndex !== -1
-    ? searchIndex
-    : url.length
-  var fqdnIndex = url.slice(0, pathLength).indexOf('://')
-
-  return fqdnIndex !== -1
-    ? url.substring(0, url.indexOf('/', 3 + fqdnIndex))
-    : undefined
-}
-
-// get type for error message
-function gettype(obj) {
-  var type = typeof obj;
-
-  if (type !== 'object') {
-    return type;
-  }
-
-  // inspect [[Class]] for objects
-  return toString.call(obj)
-    .replace(objectRegExp, '$1');
 }
 
 /**
- * Match path to a layer.
- *
- * @param {Layer} layer
- * @param {string} path
- * @private
+ * Common handler for errors
+ * @param {Error} error
+ * @returns {Error|Boolean} The error if defined, otherwise the value of the FSWatcher instance's `closed` flag
  */
-
-function matchLayer(layer, path) {
-  try {
-    return layer.match(path);
-  } catch (err) {
-    return err;
+_handleError(error) {
+  const code = error && error.code;
+  if (error && code !== 'ENOENT' && code !== 'ENOTDIR' &&
+    (!this.options.ignorePermissionErrors || (code !== 'EPERM' && code !== 'EACCES'))
+  ) {
+    this.emit(EV_ERROR, error);
   }
+  return error || this.closed;
 }
 
-// merge params with parent params
-function mergeParams(params, parent) {
-  if (typeof parent !== 'object' || !parent) {
-    return params;
+/**
+ * Helper utility for throttling
+ * @param {ThrottleType} actionType type being throttled
+ * @param {Path} path being acted upon
+ * @param {Number} timeout duration of time to suppress duplicate actions
+ * @returns {Object|false} tracking object or false if action should be suppressed
+ */
+_throttle(actionType, path, timeout) {
+  if (!this._throttled.has(actionType)) {
+    this._throttled.set(actionType, new Map());
   }
 
-  // make copy of parent for base
-  var obj = mixin({}, parent);
+  /** @type {Map<Path, Object>} */
+  const action = this._throttled.get(actionType);
+  /** @type {Object} */
+  const actionPath = action.get(path);
 
-  // simple non-numeric merging
-  if (!(0 in params) || !(0 in parent)) {
-    return mixin(obj, params);
+  if (actionPath) {
+    actionPath.count++;
+    return false;
   }
 
-  var i = 0;
-  var o = 0;
-
-  // determine numeric gaps
-  while (i in params) {
-    i++;
-  }
-
-  while (o in parent) {
-    o++;
-  }
-
-  // offset numeric indices in params before merge
-  for (i--; i >= 0; i--) {
-    params[i + o] = params[i];
-
-    // create holes for the merge when necessary
-    if (i < o) {
-      delete params[i];
-    }
-  }
-
-  return mixin(obj, params);
-}
-
-// restore obj props after function
-function restore(fn, obj) {
-  var props = new Array(arguments.length - 2);
-  var vals = new Array(arguments.length - 2);
-
-  for (var i = 0; i < props.length; i++) {
-    props[i] = arguments[i + 2];
-    vals[i] = obj[props[i]];
-  }
-
-  return function () {
-    // restore vals
-    for (var i = 0; i < props.length; i++) {
-      obj[props[i]] = vals[i];
-    }
-
-    return fn.apply(this, arguments);
+  let timeoutObject;
+  const clear = () => {
+    const item = action.get(path);
+    const count = item ? item.count : 0;
+    action.delete(path);
+    clearTimeout(timeoutObject);
+    if (item) clearTimeout(item.timeoutObject);
+    return count;
   };
+  timeoutObject = setTimeout(clear, timeout);
+  const thr = {timeoutObject, clear, count: 0};
+  action.set(path, thr);
+  return thr;
 }
 
-// send an OPTIONS response
-function sendOptionsResponse(res, options, next) {
-  try {
-    var body = options.join(',');
-    res.set('Allow', body);
-    res.send(body);
-  } catch (err) {
-    next(err);
+_incrReadyCount() {
+  return this._readyCount++;
+}
+
+/**
+ * Awaits write operation to finish.
+ * Polls a newly created file for size variations. When files size does not change for 'threshold' milliseconds calls callback.
+ * @param {Path} path being acted upon
+ * @param {Number} threshold Time in milliseconds a file size must be fixed before acknowledging write OP is finished
+ * @param {EventName} event
+ * @param {Function} awfEmit Callback to be called when ready for event to be emitted.
+ */
+_awaitWriteFinish(path, threshold, event, awfEmit) {
+  let timeoutHandler;
+
+  let fullPath = path;
+  if (this.options.cwd && !sysPath.isAbsolute(path)) {
+    fullPath = sysPath.join(this.options.cwd, path);
+  }
+
+  const now = new Date();
+
+  const awaitWriteFinish = (prevStat) => {
+    fs.stat(fullPath, (err, curStat) => {
+      if (err || !this._pendingWrites.has(path)) {
+        if (err && err.code !== 'ENOENT') awfEmit(err);
+        return;
+      }
+
+      const now = Number(new Date());
+
+      if (prevStat && curStat.size !== prevStat.size) {
+        this._pendingWrites.get(path).lastChange = now;
+      }
+      const pw = this._pendingWrites.get(path);
+      const df = now - pw.lastChange;
+
+      if (df >= threshold) {
+        this._pendingWrites.delete(path);
+        awfEmit(undefined, curStat);
+      } else {
+        timeoutHandler = setTimeout(
+          awaitWriteFinish,
+          this.options.awaitWriteFinish.pollInterval,
+          curStat
+        );
+      }
+    });
+  };
+
+  if (!this._pendingWrites.has(path)) {
+    this._pendingWrites.set(path, {
+      lastChange: now,
+      cancelWait: () => {
+        this._pendingWrites.delete(path);
+        clearTimeout(timeoutHandler);
+        return event;
+      }
+    });
+    timeoutHandler = setTimeout(
+      awaitWriteFinish,
+      this.options.awaitWriteFinish.pollInterval
+    );
   }
 }
 
-// wrap a function
-function wrap(old, fn) {
-  return function proxy() {
-    var args = new Array(arguments.length + 1);
-
-    args[0] = old;
-    for (var i = 0, len = arguments.length; i < len; i++) {
-      args[i + 1] = arguments[i];
-    }
-
-    fn.apply(this, args);
-  };
+_getGlobIgnored() {
+  return [...this._ignoredPaths.values()];
 }
+
+/**
+ * Determines whether user has asked to ignore this path.
+ * @param {Path} path filepath or dir
+ * @param {fs.Stats=} stats result of fs.stat
+ * @returns {Boolean}
+ */
+_isIgnored(path, stats) {
+  if (this.options.atomic && DOT_RE.test(path)) return true;
+  if (!this._userIgnored) {
+    const {cwd} = this.options;
+    const ign = this.options.ignored;
+
+    const ignored = ign && ign.map(normalizeIgnored(cwd));
+    const paths = arrify(ignored)
+      .filter((path) => typeof path === STRING_TYPE && !isGlob(path))
+      .map((path) => path + SLASH_GLOBSTAR);
+    const list = this._getGlobIgnored().map(normalizeIgnored(cwd)).concat(ignored, paths);
+    this._userIgnored = anymatch(list, undefined, ANYMATCH_OPTS);
+  }
+
+  return this._userIgnored([path, stats]);
+}
+
+_isntIgnored(path, stat) {
+  return !this._isIgnored(path, stat);
+}
+
+/**
+ * Provides a set of common helpers and properties relating to symlink and glob handling.
+ * @param {Path} path file, directory, or glob pattern being watched
+ * @param {Number=} depth at any depth > 0, this isn't a glob
+ * @returns {WatchHelper} object containing helpers for this path
+ */
+_getWatchHelpers(path, depth) {
+  const watchPath = depth || this.options.disableGlobbing || !isGlob(path) ? path : globParent(path);
+  const follow = this.options.followSymlinks;
+
+  return new WatchHelper(path, watchPath, follow, this);
+}
+
+// Directory helpers
+// -----------------
+
+/**
+ * Provides directory tracking objects
+ * @param {String} directory path of the directory
+ * @returns {DirEntry} the directory's tracking object
+ */
+_getWatchedDir(directory) {
+  if (!this._boundRemove) this._boundRemove = this._remove.bind(this);
+  const dir = sysPath.resolve(directory);
+  if (!this._watched.has(dir)) this._watched.set(dir, new DirEntry(dir, this._boundRemove));
+  return this._watched.get(dir);
+}
+
+// File helpers
+// ------------
+
+/**
+ * Check for read permissions.
+ * Based on this answer on SO: https://stackoverflow.com/a/11781404/1358405
+ * @param {fs.Stats} stats - object, result of fs_stat
+ * @returns {Boolean} indicates whether the file can be read
+*/
+_hasReadPermissions(stats) {
+  if (this.options.ignorePermissionErrors) return true;
+
+  // stats.mode may be bigint
+  const md = stats && Number.parseInt(stats.mode, 10);
+  const st = md & 0o777;
+  const it = Number.parseInt(st.toString(8)[0], 10);
+  return Boolean(4 & it);
+}
+
+/**
+ * Handles emitting unlink events for
+ * files and directories, and via recursion, for
+ * files and directories within directories that are unlinked
+ * @param {String} directory within which the following item is located
+ * @param {String} item      base path of item/directory
+ * @returns {void}
+*/
+_remove(directory, item, isDirectory) {
+  // if what is being deleted is a directory, get that directory's paths
+  // for recursive deleting and cleaning of watched object
+  // if it is not a directory, nestedDirectoryChildren will be empty array
+  const path = sysPath.join(directory, item);
+  const fullPath = sysPath.resolve(path);
+  isDirectory = isDirectory != null
+    ? isDirectory
+    : this._watched.has(path) || this._watched.has(fullPath);
+
+  // prevent duplicate handling in case of arriving here nearly simultaneously
+  // via multiple paths (such as _handleFile and _handleDir)
+  if (!this._throttle('remove', path, 100)) return;
+
+  // if the only watched file is removed, watch for its return
+  if (!isDirectory && !this.options.useFsEvents && this._watched.size === 1) {
+    this.add(directory, item, true);
+  }
+
+  // This will create a new entry in the watched object in either case
+  // so we got to do the directory check beforehand
+  const wp = this._getWatchedDir(path);
+  const nestedDirectoryChildren = wp.getChildren();
+
+  // Recursively remove children directories / files.
+  nestedDirectoryChildren.forEach(nested => this._remove(path, nested));
+
+  // Check if item was on the watched list and remove it
+  const parent = this._getWatchedDir(directory);
+  const wasTracked = parent.has(item);
+  parent.remove(item);
+
+  // Fixes issue #1042 -> Relative paths were detected and added as symlinks
+  // (https://github.com/paulmillr/chokidar/blob/e1753ddbc9571bdc33b4a4af172d52cb6e611c10/lib/nodefs-handler.js#L612),
+  // but never removed from the map in case the path was deleted.
+  // This leads to an incorrect state if the path was recreated:
+  // https://github.com/paulmillr/chokidar/blob/e1753ddbc9571bdc33b4a4af172d52cb6e611c10/lib/nodefs-handler.js#L553
+  if (this._symlinkPaths.has(fullPath)) {
+    this._symlinkPaths.delete(fullPath);
+  }
+
+  // If we wait for this file to be fully written, cancel the wait.
+  let relPath = path;
+  if (this.options.cwd) relPath = sysPath.relative(this.options.cwd, path);
+  if (this.options.awaitWriteFinish && this._pendingWrites.has(relPath)) {
+    const event = this._pendingWrites.get(relPath).cancelWait();
+    if (event === EV_ADD) return;
+  }
+
+  // The Entry will either be a directory that just got removed
+  // or a bogus entry to a file, in either case we have to remove it
+  this._watched.delete(path);
+  this._watched.delete(fullPath);
+  const eventName = isDirectory ? EV_UNLINK_DIR : EV_UNLINK;
+  if (wasTracked && !this._isIgnored(path)) this._emit(eventName, path);
+
+  // Avoid conflicts if we later create another file with the same name
+  if (!this.options.useFsEvents) {
+    this._closePath(path);
+  }
+}
+
+/**
+ * Closes all watchers for a path
+ * @param {Path} path
+ */
+_closePath(path) {
+  this._closeFile(path)
+  const dir = sysPath.dirname(path);
+  this._getWatchedDir(dir).remove(sysPath.basename(path));
+}
+
+/**
+ * Closes only file-specific watchers
+ * @param {Path} path
+ */
+_closeFile(path) {
+  const closers = this._closers.get(path);
+  if (!closers) return;
+  closers.forEach(closer => closer());
+  this._closers.delete(path);
+}
+
+/**
+ *
+ * @param {Path} path
+ * @param {Function} closer
+ */
+_addPathCloser(path, closer) {
+  if (!closer) return;
+  let list = this._closers.get(path);
+  if (!list) {
+    list = [];
+    this._closers.set(path, list);
+  }
+  list.push(closer);
+}
+
+_readdirp(root, opts) {
+  if (this.closed) return;
+  const options = {type: EV_ALL, alwaysStat: true, lstat: true, ...opts};
+  let stream = readdirp(root, options);
+  this._streams.add(stream);
+  stream.once(STR_CLOSE, () => {
+    stream = undefined;
+  });
+  stream.once(STR_END, () => {
+    if (stream) {
+      this._streams.delete(stream);
+      stream = undefined;
+    }
+  });
+  return stream;
+}
+
+}
+
+// Export FSWatcher class
+exports.FSWatcher = FSWatcher;
+
+/**
+ * Instantiates watcher with paths to be tracked.
+ * @param {String|Array<String>} paths file/directory paths and/or globs
+ * @param {Object=} options chokidar opts
+ * @returns an instance of FSWatcher for chaining.
+ */
+const watch = (paths, options) => {
+  const watcher = new FSWatcher(options);
+  watcher.add(paths);
+  return watcher;
+};
+
+exports.watch = watch;

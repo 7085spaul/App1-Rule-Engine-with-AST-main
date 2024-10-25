@@ -1,83 +1,58 @@
-1.8.1 / 2017-09-12
+2.8.5 / 2018-11-04
 ==================
 
-  * perf: replace regular expression with substring
+  * Fix setting `maxAge` option to `0`
 
-1.8.0 / 2017-02-18
+2.8.4 / 2017-07-12
 ==================
 
-  * Use SHA1 instead of MD5 for ETag hashing
-    - Improves performance for larger entities
-    - Works with FIPS 140-2 OpenSSL configuration
+  * Work-around Safari bug in default pre-flight response
 
-1.7.0 / 2015-06-08
+2.8.3 / 2017-03-29
 ==================
 
-  * Always include entity length in ETags for hash length extensions
-  * Generate non-Stats ETags using MD5 only (no longer CRC32)
-  * Improve stat performance by removing hashing
-  * Remove base64 padding in ETags to shorten
-  * Use MD5 instead of MD4 in weak ETags over 1KB
+  * Fix error when options delegate missing `methods` option
 
-1.6.0 / 2015-05-10
+2.8.2 / 2017-03-28
 ==================
 
-  * Improve support for JXcore
-  * Remove requirement of `atime` in the stats object
-  * Support "fake" stats objects in environments without `fs`
+  * Fix error when frozen options are passed
+  * Send "Vary: Origin" when using regular expressions
+  * Send "Vary: Access-Control-Request-Headers" when dynamic `allowedHeaders`
 
-1.5.1 / 2014-11-19
+2.8.1 / 2016-09-08
 ==================
 
-  * deps: crc@3.2.1
-    - Minor fixes
+This release only changed documentation.
 
-1.5.0 / 2014-10-14
+2.8.0 / 2016-08-23
 ==================
 
-  * Improve string performance
-  * Slightly improve speed for weak ETags over 1KB
+  * Add `optionsSuccessStatus` option
 
-1.4.0 / 2014-09-21
+2.7.2 / 2016-08-23
 ==================
 
-  * Support "fake" stats objects
-  * Support Node.js 0.6
+  * Fix error when Node.js running in strict mode
 
-1.3.1 / 2014-09-14
+2.7.1 / 2015-05-28
 ==================
 
-  * Use the (new and improved) `crc` for crc32
+  * Move module into expressjs organization
 
-1.3.0 / 2014-08-29
+2.7.0 / 2015-05-28
 ==================
 
-  * Default strings to strong ETags
-  * Improve speed for weak ETags over 1KB
+  * Allow array of matching condition as `origin` option
+  * Allow regular expression as `origin` option
 
-1.2.1 / 2014-08-29
+2.6.1 / 2015-05-28
 ==================
 
-  * Use the (much faster) `buffer-crc32` for crc32
+  * Update `license` in package.json
 
-1.2.0 / 2014-08-24
+2.6.0 / 2015-04-27
 ==================
 
-  * Add support for file stat objects
-
-1.1.0 / 2014-08-24
-==================
-
-  * Add fast-path for empty entity
-  * Add weak ETag generation
-  * Shrink size of generated ETags
-
-1.0.1 / 2014-08-24
-==================
-
-  * Fix behavior of string containing Unicode
-
-1.0.0 / 2014-05-18
-==================
-
-  * Initial release
+  * Add `preflightContinue` option
+  * Fix "Vary: Origin" header added for "*"
