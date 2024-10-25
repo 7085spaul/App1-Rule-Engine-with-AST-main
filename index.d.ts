@@ -1,192 +1,169 @@
-// TypeScript Version: 3.0
-
-/// <reference types="node" />
-
-import * as fs from "fs";
-import { EventEmitter } from "events";
-import { Matcher } from 'anymatch';
-
-export class FSWatcher extends EventEmitter implements fs.FSWatcher {
-  options: WatchOptions;
-
-  /**
-   * Constructs a new FSWatcher instance with optional WatchOptions parameter.
-   */
-  constructor(options?: WatchOptions);
-
-  /**
-   * Add files, directories, or glob patterns for tracking. Takes an array of strings or just one
-   * string.
-   */
-  add(paths: string | ReadonlyArray<string>): this;
-
-  /**
-   * Stop watching files, directories, or glob patterns. Takes an array of strings or just one
-   * string.
-   */
-  unwatch(paths: string | ReadonlyArray<string>): this;
-
-  /**
-   * Returns an object representing all the paths on the file system being watched by this
-   * `FSWatcher` instance. The object's keys are all the directories (using absolute paths unless
-   * the `cwd` option was used), and the values are arrays of the names of the items contained in
-   * each directory.
-   */
-  getWatched(): {
-    [directory: string]: string[];
-  };
-
-  /**
-   * Removes all listeners from watched files.
-   */
-  close(): Promise<void>;
-
-  on(event: 'add'|'addDir'|'change', listener: (path: string, stats?: fs.Stats) => void): this;
-
-  on(event: 'all', listener: (eventName: 'add'|'addDir'|'change'|'unlink'|'unlinkDir', path: string, stats?: fs.Stats) => void): this;
-
-  /**
-   * Error occurred
-   */
-  on(event: 'error', listener: (error: Error) => void): this;
-
-  /**
-   * Exposes the native Node `fs.FSWatcher events`
-   */
-  on(event: 'raw', listener: (eventName: string, path: string, details: any) => void): this;
-
-  /**
-   * Fires when the initial scan is complete
-   */
-  on(event: 'ready', listener: () => void): this;
-
-  on(event: 'unlink'|'unlinkDir', listener: (path: string) => void): this;
-
-  on(event: string, listener: (...args: any[]) => void): this;
-
-  ref(): this;
-  
-  unref(): this;
+/// <reference lib="es2020"/>
+/** https://url.spec.whatwg.org/#url-representation */
+export interface URLRecord {
+    scheme: string;
+    username: string;
+    password: string;
+    host: string | number | IPv6Address | null;
+    port: number | null;
+    path: string | string[];
+    query: string | null;
+    fragment: string | null;
 }
 
-export interface WatchOptions {
-  /**
-   * Indicates whether the process should continue to run as long as files are being watched. If
-   * set to `false` when using `fsevents` to watch, no more events will be emitted after `ready`,
-   * even if the process continues to run.
-   */
-  persistent?: boolean;
+/** https://url.spec.whatwg.org/#concept-ipv6 */
+export type IPv6Address = [number, number, number, number, number, number, number, number];
 
-  /**
-   * ([anymatch](https://github.com/micromatch/anymatch)-compatible definition) Defines files/paths to
-   * be ignored. The whole relative or absolute path is tested, not just filename. If a function
-   * with two arguments is provided, it gets called twice per path - once with a single argument
-   * (the path), second time with two arguments (the path and the
-   * [`fs.Stats`](https://nodejs.org/api/fs.html#fs_class_fs_stats) object of that path).
-   */
-  ignored?: Matcher;
+/** https://url.spec.whatwg.org/#url-class */
+export class URL {
+    constructor(url: string, base?: string | URL);
 
-  /**
-   * If set to `false` then `add`/`addDir` events are also emitted for matching paths while
-   * instantiating the watching as chokidar discovers these file paths (before the `ready` event).
-   */
-  ignoreInitial?: boolean;
+    get href(): string;
+    set href(V: string);
 
-  /**
-   * When `false`, only the symlinks themselves will be watched for changes instead of following
-   * the link references and bubbling events through the link's path.
-   */
-  followSymlinks?: boolean;
+    get origin(): string;
 
-  /**
-   * The base directory from which watch `paths` are to be derived. Paths emitted with events will
-   * be relative to this.
-   */
-  cwd?: string;
+    get protocol(): string;
+    set protocol(V: string);
 
-  /**
-   *  If set to true then the strings passed to .watch() and .add() are treated as literal path
-   *  names, even if they look like globs. Default: false.
-   */
-  disableGlobbing?: boolean;
+    get username(): string;
+    set username(V: string);
 
-  /**
-   * Whether to use fs.watchFile (backed by polling), or fs.watch. If polling leads to high CPU
-   * utilization, consider setting this to `false`. It is typically necessary to **set this to
-   * `true` to successfully watch files over a network**, and it may be necessary to successfully
-   * watch files in other non-standard situations. Setting to `true` explicitly on OS X overrides
-   * the `useFsEvents` default.
-   */
-  usePolling?: boolean;
+    get password(): string;
+    set password(V: string);
 
-  /**
-   * Whether to use the `fsevents` watching interface if available. When set to `true` explicitly
-   * and `fsevents` is available this supercedes the `usePolling` setting. When set to `false` on
-   * OS X, `usePolling: true` becomes the default.
-   */
-  useFsEvents?: boolean;
+    get host(): string;
+    set host(V: string);
 
-  /**
-   * If relying upon the [`fs.Stats`](https://nodejs.org/api/fs.html#fs_class_fs_stats) object that
-   * may get passed with `add`, `addDir`, and `change` events, set this to `true` to ensure it is
-   * provided even in cases where it wasn't already available from the underlying watch events.
-   */
-  alwaysStat?: boolean;
+    get hostname(): string;
+    set hostname(V: string);
 
-  /**
-   * If set, limits how many levels of subdirectories will be traversed.
-   */
-  depth?: number;
+    get port(): string;
+    set port(V: string);
 
-  /**
-   * Interval of file system polling.
-   */
-  interval?: number;
+    get pathname(): string;
+    set pathname(V: string);
 
-  /**
-   * Interval of file system polling for binary files. ([see list of binary extensions](https://gi
-   * thub.com/sindresorhus/binary-extensions/blob/master/binary-extensions.json))
-   */
-  binaryInterval?: number;
+    get search(): string;
+    set search(V: string);
 
-  /**
-   *  Indicates whether to watch files that don't have read permissions if possible. If watching
-   *  fails due to `EPERM` or `EACCES` with this set to `true`, the errors will be suppressed
-   *  silently.
-   */
-  ignorePermissionErrors?: boolean;
+    get searchParams(): URLSearchParams;
 
-  /**
-   * `true` if `useFsEvents` and `usePolling` are `false`). Automatically filters out artifacts
-   * that occur when using editors that use "atomic writes" instead of writing directly to the
-   * source file. If a file is re-added within 100 ms of being deleted, Chokidar emits a `change`
-   * event rather than `unlink` then `add`. If the default of 100 ms does not work well for you,
-   * you can override it by setting `atomic` to a custom value, in milliseconds.
-   */
-  atomic?: boolean | number;
+    get hash(): string;
+    set hash(V: string);
 
-  /**
-   * can be set to an object in order to adjust timing params:
-   */
-  awaitWriteFinish?: AwaitWriteFinishOptions | boolean;
+    toJSON(): string;
+
+    readonly [Symbol.toStringTag]: "URL";
 }
 
-export interface AwaitWriteFinishOptions {
-  /**
-   * Amount of time in milliseconds for a file size to remain constant before emitting its event.
-   */
-  stabilityThreshold?: number;
+/** https://url.spec.whatwg.org/#interface-urlsearchparams */
+export class URLSearchParams {
+    constructor(
+        init?:
+            | ReadonlyArray<readonly [name: string, value: string]>
+            | Iterable<readonly [name: string, value: string]>
+            | { readonly [name: string]: string }
+            | string,
+    );
 
-  /**
-   * File size polling interval.
-   */
-  pollInterval?: number;
+    append(name: string, value: string): void;
+    delete(name: string): void;
+    get(name: string): string | null;
+    getAll(name: string): string[];
+    has(name: string): boolean;
+    set(name: string, value: string): void;
+    sort(): void;
+
+    keys(): IterableIterator<string>;
+    values(): IterableIterator<string>;
+    entries(): IterableIterator<[name: string, value: string]>;
+    forEach<THIS_ARG = void>(
+        callback: (this: THIS_ARG, value: string, name: string, searchParams: this) => void,
+        thisArg?: THIS_ARG,
+    ): void;
+
+    readonly [Symbol.toStringTag]: "URLSearchParams";
+    [Symbol.iterator](): IterableIterator<[name: string, value: string]>;
 }
 
-/**
- * produces an instance of `FSWatcher`.
- */
-export function watch(
-  paths: string | ReadonlyArray<string>,
-  options?: WatchOptions
-): FSWatcher;
+/** https://url.spec.whatwg.org/#concept-url-parser */
+export function parseURL(input: string, options?: { readonly baseURL?: URLRecord | undefined }): URLRecord | null;
+
+/** https://url.spec.whatwg.org/#concept-basic-url-parser */
+export function basicURLParse(
+    input: string,
+    options?: {
+        baseURL?: URLRecord | undefined;
+        url?: URLRecord | undefined;
+        stateOverride?: StateOverride | undefined;
+    },
+): URLRecord | null;
+
+/** https://url.spec.whatwg.org/#scheme-start-state */
+export type StateOverride =
+    | "scheme start"
+    | "scheme"
+    | "no scheme"
+    | "special relative or authority"
+    | "path or authority"
+    | "relative"
+    | "relative slash"
+    | "special authority slashes"
+    | "special authority ignore slashes"
+    | "authority"
+    | "host"
+    | "hostname"
+    | "port"
+    | "file"
+    | "file slash"
+    | "file host"
+    | "path start"
+    | "path"
+    | "opaque path"
+    | "query"
+    | "fragment";
+
+/** https://url.spec.whatwg.org/#concept-url-serializer */
+export function serializeURL(urlRecord: URLRecord, excludeFragment?: boolean): string;
+
+/** https://url.spec.whatwg.org/#concept-host-serializer */
+export function serializeHost(host: string | number | IPv6Address): string;
+
+/** https://url.spec.whatwg.org/#url-path-serializer */
+export function serializePath(urlRecord: URLRecord): string;
+
+/** https://url.spec.whatwg.org/#serialize-an-integer */
+export function serializeInteger(number: number): string;
+
+/** https://html.spec.whatwg.org#ascii-serialisation-of-an-origin */
+export function serializeURLOrigin(urlRecord: URLRecord): string;
+
+/** https://url.spec.whatwg.org/#set-the-username */
+export function setTheUsername(urlRecord: URLRecord, username: string): void;
+
+/** https://url.spec.whatwg.org/#set-the-password */
+export function setThePassword(urlRecord: URLRecord, password: string): void;
+
+/** https://url.spec.whatwg.org/#url-opaque-path */
+export function hasAnOpaquePath(urlRecord: URLRecord): boolean;
+
+/** https://url.spec.whatwg.org/#cannot-have-a-username-password-port */
+export function cannotHaveAUsernamePasswordPort(urlRecord: URLRecord): boolean;
+
+/** https://url.spec.whatwg.org/#percent-decode */
+export function percentDecodeBytes(buffer: TypedArray): Uint8Array;
+
+/** https://url.spec.whatwg.org/#string-percent-decode */
+export function percentDecodeString(string: string): Uint8Array;
+
+export type TypedArray =
+    | Uint8Array
+    | Uint8ClampedArray
+    | Uint16Array
+    | Uint32Array
+    | Int8Array
+    | Int16Array
+    | Int32Array
+    | Float32Array
+    | Float64Array;

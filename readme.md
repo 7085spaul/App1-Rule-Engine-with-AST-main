@@ -1,70 +1,29 @@
-# has-flag [![Build Status](https://travis-ci.org/sindresorhus/has-flag.svg?branch=master)](https://travis-ci.org/sindresorhus/has-flag)
+# saslprep
 
-> Check if [`argv`](https://nodejs.org/docs/latest/api/process.html#process_process_argv) has a specific flag
+_Note: This is a fork of the original [`saslprep`](https://www.npmjs.com/package/saslprep) npm package
+and provides equivalent functionality._
 
-Correctly stops looking after an `--` argument terminator.
+Stringprep Profile for User Names and Passwords, [rfc4013](https://tools.ietf.org/html/rfc4013)
 
-
-## Install
-
-```
-$ npm install has-flag
-```
-
-
-## Usage
+### Usage
 
 ```js
-// foo.js
-const hasFlag = require('has-flag');
+const saslprep = require('@mongodb-js/saslprep');
 
-hasFlag('unicorn');
-//=> true
-
-hasFlag('--unicorn');
-//=> true
-
-hasFlag('f');
-//=> true
-
-hasFlag('-f');
-//=> true
-
-hasFlag('foo=bar');
-//=> true
-
-hasFlag('foo');
-//=> false
-
-hasFlag('rainbow');
-//=> false
+saslprep('password\u00AD'); // password
+saslprep('password\u0007'); // Error: prohibited character
 ```
 
-```
-$ node foo.js -f --unicorn --foo=bar -- --rainbow
-```
+### API
 
+##### `saslprep(input: String, opts: Options): String`
 
-## API
+Normalize user name or password.
 
-### hasFlag(flag, [argv])
+##### `Options.allowUnassigned: bool`
 
-Returns a boolean for whether the flag exists.
-
-#### flag
-
-Type: `string`
-
-CLI flag to look for. The `--` prefix is optional.
-
-#### argv
-
-Type: `string[]`<br>
-Default: `process.argv`
-
-CLI arguments.
-
+A special behavior for unassigned code points, see https://tools.ietf.org/html/rfc4013#section-2.5. Disabled by default.
 
 ## License
 
-MIT © [Sindre Sorhus](https://sindresorhus.com)
+MIT, 2017-2019 (c) Dmitriy Tsvettsikh
