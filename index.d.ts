@@ -1,141 +1,62 @@
-export type NodemonEventHandler =
-  | 'start'
-  | 'crash'
-  | 'exit'
-  | 'quit'
-  | 'restart'
-  | 'config:update'
-  | 'log'
-  | 'readable'
-  | 'stdout'
-  | 'stderr';
-
-export type NodemonEventListener = {
-  on(event: 'start' | 'crash' | 'readable', listener: () => void): Nodemon;
-  on(event: 'log', listener: (e: NodemonEventLog) => void): Nodemon;
-  on(event: 'stdout' | 'stderr', listener: (e: string) => void): Nodemon;
-  on(event: 'restart', listener: (e?: NodemonEventRestart) => void): Nodemon;
-  on(event: 'quit', listener: (e?: NodemonEventQuit) => void): Nodemon;
-  on(event: 'exit', listener: (e?: NodemonEventExit) => void): Nodemon;
-  on(
-    event: 'config:update',
-    listener: (e?: NodemonEventConfig) => void
-  ): Nodemon;
-};
-
-export type Nodemon = {
-  (options?: NodemonSettings): Nodemon;
-  on(event: 'start' | 'crash', listener: () => void): Nodemon;
-  on(event: 'log', listener: (e: NodemonEventLog) => void): Nodemon;
-  on(event: 'restart', listener: (e?: NodemonEventRestart) => void): Nodemon;
-  on(event: 'quit', listener: (e?: NodemonEventQuit) => void): Nodemon;
-  on(event: 'exit', listener: (e?: NodemonEventExit) => void): Nodemon;
-  on(
-    event: 'config:update',
-    listener: (e?: NodemonEventConfig) => void
-  ): Nodemon;
-
-  // this is repeated because VS Code doesn't autocomplete otherwise
-  addEventListener(event: 'start' | 'crash', listener: () => void): Nodemon;
-  addEventListener(
-    event: 'log',
-    listener: (e: NodemonEventLog) => void
-  ): Nodemon;
-  addEventListener(
-    event: 'restart',
-    listener: (e?: NodemonEventRestart) => void
-  ): Nodemon;
-  addEventListener(
-    event: 'quit',
-    listener: (e?: NodemonEventQuit) => void
-  ): Nodemon;
-  addEventListener(
-    event: 'exit',
-    listener: (e?: NodemonEventExit) => void
-  ): Nodemon;
-  addEventListener(
-    event: 'config:update',
-    listener: (e?: NodemonEventConfig) => void
-  ): Nodemon;
-
-  once(event: 'start' | 'crash', listener: () => void): Nodemon;
-  once(event: 'log', listener: (e: NodemonEventLog) => void): Nodemon;
-  once(event: 'restart', listener: (e?: NodemonEventRestart) => void): Nodemon;
-  once(event: 'quit', listener: (e?: NodemonEventQuit) => void): Nodemon;
-  once(event: 'exit', listener: (e?: NodemonEventExit) => void): Nodemon;
-  once(
-    event: 'config:update',
-    listener: (e?: NodemonEventConfig) => void
-  ): Nodemon;
-
-  removeAllListeners(event: NodemonEventHandler): Nodemon;
-  emit(type: NodemonEventHandler, event?: any): Nodemon;
-  reset(callback: Function): Nodemon;
-  restart(): Nodemon;
-  config: NodemonSettings;
-};
-
-export type NodemonEventLog = {
-  /**
-    detail*: what you get with nodemon --verbose.
-    status: subprocess starting, restarting.
-    fail: is the subprocess crashing.
-    error: is a nodemon system error.
-  */
-  type: 'detail' | 'log' | 'status' | 'error' | 'fail';
-  /** the plain text message */
-  message: String;
-  /** contains the terminal escape codes to add colour, plus the "[nodemon]" prefix */
-  colour: String;
-};
-
-export interface NodemonEventRestart {
-  matched?: {
-    result: string[];
-    total: number;
-  };
+import { URL } from 'whatwg-url';
+import { redactConnectionString, ConnectionStringRedactionOptions } from './redact';
+export { redactConnectionString, ConnectionStringRedactionOptions };
+declare class CaseInsensitiveMap<K extends string = string> extends Map<K, string> {
+    delete(name: K): boolean;
+    get(name: K): string | undefined;
+    has(name: K): boolean;
+    set(name: K, value: any): this;
+    _normalizeKey(name: any): K;
 }
-
-export type NodemonEventQuit = 143 | 130;
-export type NodemonEventExit = number;
-
-// TODO: Define the type of NodemonEventConfig
-export type NodemonEventConfig = any;
-
-export interface NodemonConfig {
-  /* restartable defaults to "rs" as a string the user enters */
-  restartable?: false | String;
-  colours?: Boolean;
-  execMap?: { [key: string]: string };
-  ignoreRoot?: string[];
-  watch?: string[];
-  stdin?: boolean;
-  runOnChangeOnly?: boolean;
-  verbose?: boolean;
-  signal?: string;
-  stdout?: boolean;
-  watchOptions?: WatchOptions;
+declare abstract class URLWithoutHost extends URL {
+    abstract get host(): never;
+    abstract set host(value: never);
+    abstract get hostname(): never;
+    abstract set hostname(value: never);
+    abstract get port(): never;
+    abstract set port(value: never);
+    abstract get href(): string;
+    abstract set href(value: string);
 }
-
-export interface NodemonSettings extends NodemonConfig {
-  script: string;
-  ext?: string; // "js,mjs" etc (should really support an array of strings, but I don't think it does right now)
-  events?: { [key: string]: string };
-  env?: { [key: string]: string };
-  exec?: string; // node, python, etc
-  execArgs?: string[]; // args passed to node, etc,
-  nodeArgs?: string[]; // args passed to node, etc,
-  delay?: number;
+export interface ConnectionStringParsingOptions {
+    looseValidation?: boolean;
 }
-
-export interface WatchOptions {
-  ignorePermissionErrors: boolean;
-  ignored: string;
-  persistent: boolean;
-  usePolling: boolean;
-  interval: number;
+export declare class ConnectionString extends URLWithoutHost {
+    _hosts: string[];
+    constructor(uri: string, options?: ConnectionStringParsingOptions);
+    get host(): never;
+    set host(_ignored: never);
+    get hostname(): never;
+    set hostname(_ignored: never);
+    get port(): never;
+    set port(_ignored: never);
+    get href(): string;
+    set href(_ignored: string);
+    get isSRV(): boolean;
+    get hosts(): string[];
+    set hosts(list: string[]);
+    toString(): string;
+    clone(): ConnectionString;
+    redact(options?: ConnectionStringRedactionOptions): ConnectionString;
+    typedSearchParams<T extends {}>(): {
+        append(name: keyof T & string, value: any): void;
+        delete(name: keyof T & string): void;
+        get(name: keyof T & string): string | null;
+        getAll(name: keyof T & string): string[];
+        has(name: keyof T & string): boolean;
+        set(name: keyof T & string, value: any): void;
+        keys(): IterableIterator<keyof T & string>;
+        values(): IterableIterator<string>;
+        entries(): IterableIterator<[keyof T & string, string]>;
+        _normalizeKey(name: keyof T & string): string;
+        [Symbol.iterator](): IterableIterator<[keyof T & string, string]>;
+        sort(): void;
+        forEach<THIS_ARG = void>(callback: (this: THIS_ARG, value: string, name: string, searchParams: any) => void, thisArg?: THIS_ARG | undefined): void;
+        readonly [Symbol.toStringTag]: "URLSearchParams";
+    };
 }
-
-const nodemon: Nodemon = (settings: NodemonSettings): Nodemon => {};
-
-export default nodemon;
+export declare class CommaAndColonSeparatedRecord<K extends {} = Record<string, unknown>> extends CaseInsensitiveMap<keyof K & string> {
+    constructor(from?: string | null);
+    toString(): string;
+}
+export default ConnectionString;
