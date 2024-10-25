@@ -1,47 +1,36 @@
-var clone = require('./clone');
+'use strict';
 
-module.exports = merge;
+module.exports = function merge(s1, s2, skipConflictingPaths) {
+  const paths = Object.keys(s2.tree);
+  const pathsToAdd = {};
+  for (const key of paths) {
+    if (skipConflictingPaths && (s1.paths[key] || s1.nested[key] || s1.singleNestedPaths[key])) {
+      continue;
+    }
+    pathsToAdd[key] = s2.tree[key];
+  }
+  s1.options._isMerging = true;
+  s1.add(pathsToAdd, null);
+  delete s1.options._isMerging;
 
-function typesMatch(a, b) {
-  return (typeof a === typeof b) && (Array.isArray(a) === Array.isArray(b));
-}
+  s1.callQueue = s1.callQueue.concat(s2.callQueue);
+  s1.method(s2.methods);
+  s1.static(s2.statics);
 
-/**
- * A deep merge of the source based on the target.
- * @param  {Object} source   [description]
- * @param  {Object} target   [description]
- * @return {Object}          [description]
- */
-function merge(source, target, result) {
-  if (result === undefined) {
-    result = clone(source);
+  for (const [option, value] of Object.entries(s2._userProvidedOptions)) {
+    if (!(option in s1._userProvidedOptions)) {
+      s1.set(option, value);
+    }
   }
 
-  // merge missing values from the target to the source
-  Object.getOwnPropertyNames(target).forEach(function (key) {
-    if (source[key] === undefined) {
-      result[key] = target[key];
-    }
-  });
+  for (const query in s2.query) {
+    s1.query[query] = s2.query[query];
+  }
 
-  Object.getOwnPropertyNames(source).forEach(function (key) {
-    var value = source[key];
+  for (const virtual in s2.virtuals) {
+    s1.virtuals[virtual] = s2.virtuals[virtual].clone();
+  }
 
-    if (target[key] && typesMatch(value, target[key])) {
-      // merge empty values
-      if (value === '') {
-        result[key] = target[key];
-      }
-
-      if (Array.isArray(value)) {
-        if (value.length === 0 && target[key].length) {
-          result[key] = target[key].slice(0);
-        }
-      } else if (typeof value === 'object') {
-        result[key] = merge(value, target[key]);
-      }
-    }
-  });
-
-  return result;
-}
+  s1._indexes = s1._indexes.concat(s2._indexes || []);
+  s1.s.hooks.merge(s2.s.hooks, false);
+};
