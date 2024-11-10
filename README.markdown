@@ -1,5 +1,5 @@
 # Rule Engine Application
-Hosted link: http://127.0.0.1:5500/App1-Rule-Engine-with-AST-main/views/index.html
+Hosted link: https://7085spaul.github.io/App1-Rule-Engine-with-AST-main/
 
 ## Overview
 
